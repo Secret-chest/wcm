@@ -364,7 +364,7 @@ OptionWidget::OptionWidget(Option *option) : Gtk::Box(Gtk::ORIENTATION_HORIZONTA
     name_label.set_text(option->disp_name);
     name_label.set_tooltip_markup(option->tooltip);
     name_label.set_size_request(OPTION_LABEL_SIZE);
-    name_label.set_alignment(Gtk::ALIGN_START);
+    name_label.set_xalign(0);
 
     reset_button.set_image_from_icon_name("edit-clear");
     reset_button.set_tooltip_text(_("Reset to default"));
@@ -769,7 +769,7 @@ BindingsDynamicList::BindingWidget::BindingWidget(const std::string & cmd_name,
         option->create_child_option(command, OPTION_TYPE_STRING);
 
     type_label.set_size_request(OPTION_LABEL_SIZE);
-    type_label.set_alignment(Gtk::ALIGN_START);
+    type_label.set_xalign(0);
     type_box.pack_start(type_label, false, false);
     type_combo_box.append(_("Regular"));
     type_combo_box.append(_("Repeat"));
@@ -790,13 +790,13 @@ BindingsDynamicList::BindingWidget::BindingWidget(const std::string & cmd_name,
     vbox.pack_start(type_box, false, false);
 
     binding_label.set_size_request(OPTION_LABEL_SIZE);
-    binding_label.set_alignment(Gtk::ALIGN_START);
+    binding_label.set_xalign(0);
     binding_box.pack_start(binding_label, false, false);
     binding_box.pack_start(*key_entry, true, true);
     vbox.pack_start(binding_box, false, false);
 
     command_label.set_size_request(OPTION_LABEL_SIZE);
-    command_label.set_alignment(Gtk::ALIGN_START);
+    command_label.set_xalign(0);
     command_box.pack_start(command_label, false, false);
     expander.set_label(fmt::format(_("Command {name}"), fmt::arg("name", cmd_name)));
     command_entry.signal_changed().connect([=]
@@ -840,7 +840,7 @@ VswitchBindingsDynamicList<kind>::BindingWidget::BindingWidget(std::shared_ptr<w
     {
         key_option->set_save(key_entry.get_value());
     });
-    label.set_alignment(Gtk::ALIGN_START);
+    label.set_xalign(0);
     remove_button.set_image_from_icon_name("list-remove");
     remove_button.signal_clicked().connect([=] ()
     {
@@ -1563,17 +1563,17 @@ void WCM::create_main_layout()
     plugin_left_panel_layout.pack_start(plugin_name_label, false, false);
     plugin_name_label.set_line_wrap();
     plugin_name_label.set_max_width_chars(15);
-    plugin_name_label.set_alignment(Gtk::ALIGN_CENTER);
+    plugin_name_label.set_xalign(0.5);
     plugin_name_label.set_justify(Gtk::JUSTIFY_CENTER);
     plugin_name_label.property_margin().set_value(50);
     plugin_name_label.set_margin_bottom(25);
     plugin_left_panel_layout.pack_start(plugin_description_label, false, false);
     plugin_description_label.set_line_wrap();
     plugin_description_label.set_max_width_chars(20);
-    plugin_description_label.set_alignment(Gtk::ALIGN_CENTER);
+    plugin_description_label.set_xalign(0.5);
     plugin_description_label.set_justify(Gtk::JUSTIFY_CENTER);
-    plugin_description_label.set_margin_left(50);
-    plugin_description_label.set_margin_right(50);
+    plugin_description_label.set_margin_start(50);
+    plugin_description_label.set_margin_end(50);
     plugin_left_panel_layout.pack_start(plugin_enabled_box, false, false);
     plugin_enabled_box.set_margin_top(25);
     plugin_enabled_box.pack_start(plugin_enabled_check);
