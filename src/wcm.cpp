@@ -11,23 +11,56 @@
 #include <wayfire/util/duration.hpp>
 #include <wordexp.h>
 #include <glibmm/i18n.h>
+#include <gtkmm/filechooser.h>
+#include <gtkmm/filechooser.h>
 
 #define OUTPUT_CONFIG_PROGRAM "wdisplays"
 
 constexpr int OPTION_LABEL_SIZE = 200;
 
+#include <gtkmm.h>
+#include <fmt/core.h>
+#include <glibmm/main.h>
+
 bool KeyEntry::check_and_confirm(const std::string & key_str)
 {
-    if ((key_str.find_first_not_of(' ') != std::string::npos) && (key_str.front() != '<') &&
+    if ((key_str.find_first_not_of(' ') != std::string::npos) &&
+        (key_str.front() != '<') &&
         ((key_str.find("BTN") != std::string::npos) ||
          (key_str.find("KEY") != std::string::npos)))
     {
-        auto dialog = Gtk::MessageDialog(
+        auto dialog = Gtk::AlertDialog::create(
             fmt::format(_("Attempting to bind <tt><b>\"{key_str}\"</b></tt> without modifier."
                           " You will be unable to use this key/button for anything else!"
-                          " Are you sure?"), fmt::arg("key_str", key_str)),
-            true, Gtk::MESSAGE_QUESTION, Gtk::BUTTONS_YES_NO);
-        return dialog.run() == Gtk::RESPONSE_YES;
+                          " Are you sure?"),
+                        fmt::arg("key_str", key_str)));
+
+        dialog->set_detail(_("This may prevent you from using the key/button normally."));
+        dialog->set_buttons({ _("Yes"), _("No") });
+
+        bool confirmed = false;
+        bool done = false;
+
+        dialog->choose(Gio::SlotAsyncReady(
+            [dialog, &confirmed, &done](const Glib::RefPtr<Gio::AsyncResult>& result) {
+                try {
+                    int response = dialog->choose_finish(result);
+                    confirmed = (response == 0); // 0 = "Yes"
+                } catch (const Glib::Error& ex) {
+                    confirmed = false; // treat errors as "No"
+                }
+                done = true;
+                Glib::MainContext::get_default()->wakeup();
+            }));
+
+
+        auto context = Glib::MainContext::get_default();
+        while (!done)
+        {
+            context->iteration(true);
+        }
+
+        return confirmed;
     }
 
     return true;
@@ -65,7 +98,7 @@ std::string KeyEntry::grab_key()
 
     auto grab_dialog = Gtk::Dialog(_("Waiting for Binding"), true);
     auto label = Gtk::Label(_("none"));
-    grab_dialog.get_content_area()->pack_start(label);
+    grab_dialog.get_content_area()->prepend(label);
     label.show();
 
     uint mod_mask = 0;
@@ -104,35 +137,37 @@ std::string KeyEntry::grab_key()
     };
     update_label();
 
-    grab_dialog.signal_key_release_event().connect([&] (GdkEventKey *event)
+    auto event_controller = Gtk::EventControllerKey::create();
+    grab_dialog.add_controller(event_controller);
+    event_controller->signal_key_released().connect([&] (int keyval, int keycode, Gdk::ModifierType state)
     {
-        mod_mask &= ~get_mod_from_keyval(event->keyval);
+        mod_mask &= ~get_mod_from_keyval(keyval);
         update_label();
-        return false;
     });
-    grab_dialog.signal_key_press_event().connect(
-        [&] (GdkEventKey *event)
+    event_controller->signal_key_pressed().connect([&] (int keyval, int keycode, Gdk::ModifierType state)
     {
-        auto new_mod = get_mod_from_keyval(event->keyval);
+        auto new_mod = get_mod_from_keyval(keyval);
         mod_mask    |= new_mod;
         if (new_mod == MOD_TYPE_NONE)
         {
             key_btn_string =
                 libevdev_event_code_get_name(EV_KEY,
-                    event->hardware_keycode - HW_OFFSET);
-            grab_dialog.response(Gtk::RESPONSE_ACCEPT);
+                    keycode - HW_OFFSET);
+            grab_dialog.response(Gtk::ResponseType::ACCEPT);
         } else
         {
             update_label();
         }
-
         return true;
     },
         false);
-    grab_dialog.signal_button_press_event().connect([&] (GdkEventButton *event)
+
+    auto event_controller_button = Gtk::GestureClick::create();
+    grab_dialog.add_controller(event_controller_button);
+    event_controller_button->signal_released().connect([&] (int npress, double x, double y)
     {
         key_btn_string.clear();
-        switch (event->button)
+        switch (event_controller_button->get_current_button())
         {
           case GDK_BUTTON_PRIMARY:
             key_btn_string = "BTN_LEFT";
@@ -158,8 +193,7 @@ std::string KeyEntry::grab_key()
             break;
         }
 
-        grab_dialog.response(Gtk::RESPONSE_ACCEPT);
-        return true;
+        grab_dialog.response(Gtk::ResponseType::ACCEPT);
     });
 
     grab_dialog.show();
@@ -169,13 +203,13 @@ std::string KeyEntry::grab_key()
     }
 
     grab_dialog.fullscreen();
-    auto result = grab_dialog.run();
+    //auto result = grab_dialog.run();
     WCM::get_instance()->unlock_input();
 
-    if (result == Gtk::RESPONSE_ACCEPT)
-    {
-        return cur_state_string() + key_btn_string;
-    }
+    // if (result == Gtk::ResponseType::ACCEPT)
+    // {
+    //     return cur_state_string() + key_btn_string;
+    // }
 
     return "";
 }
@@ -184,10 +218,10 @@ KeyEntry::KeyEntry()
 {
     add(grab_layout);
     add(edit_layout);
-    set_transition_type(Gtk::STACK_TRANSITION_TYPE_CROSSFADE);
+    set_transition_type(Gtk::StackTransitionType::CROSSFADE);
 
-    grab_label.set_ellipsize(Pango::ELLIPSIZE_END);
-    grab_button.add(grab_label);
+    grab_label.set_ellipsize(Pango::EllipsizeMode::END);
+    grab_button.set_child(grab_label);
     grab_button.signal_clicked().connect([=]
     {
         const auto value = grab_key();
@@ -203,10 +237,10 @@ KeyEntry::KeyEntry()
         entry.set_text(get_value());
         set_visible_child(edit_layout);
     });
-    grab_layout.pack_start(grab_button, true, true);
-    grab_layout.pack_start(edit_button, false, false);
+    grab_layout.append(grab_button);
+    grab_layout.append(edit_button);
 
-    edit_layout.pack_start(entry, true, true);
+    edit_layout.prepend(entry);
     ok_button.set_image_from_icon_name("gtk-ok");
     ok_button.set_tooltip_text(_("Save binding"));
     ok_button.signal_clicked().connect([=]
@@ -221,8 +255,8 @@ KeyEntry::KeyEntry()
     cancel_button.set_image_from_icon_name("gtk-cancel");
     cancel_button.set_tooltip_text(_("Cancel"));
     cancel_button.signal_clicked().connect([=] { set_visible_child(grab_layout); });
-    edit_layout.pack_start(cancel_button, false, false);
-    edit_layout.pack_start(ok_button, false, false);
+    edit_layout.prepend(cancel_button);
+    edit_layout.prepend(ok_button);
 }
 
 static void add_comma_with_space(Glib::ustring& text)
@@ -242,6 +276,7 @@ static void add_comma_with_space(Glib::ustring& text)
     }
 }
 
+/*
 LayoutsEntry::LayoutsEntry()
 {
     for (const auto & [name, description] : get_xkb_layouts(WCM::get_instance()->get_xkb_rules()))
@@ -293,6 +328,7 @@ XkbModelEntry::XkbModelEntry()
         menu->show_all();
     });
 }
+*/
 
 std::ostream& operator <<(std::ostream & out, const wf::color_t & color)
 {
@@ -358,19 +394,19 @@ OptionWidget::~OptionWidget()
     }
 }
 
-OptionWidget::OptionWidget(Option *option) : Gtk::Box(Gtk::ORIENTATION_HORIZONTAL,
+OptionWidget::OptionWidget(Option *option) : Gtk::Box(Gtk::Orientation::HORIZONTAL,
         10)
 {
     name_label.set_text(option->disp_name);
     name_label.set_tooltip_markup(option->tooltip);
     name_label.set_size_request(OPTION_LABEL_SIZE);
     name_label.set_xalign(0);
+    name_label.set_hexpand(true);
 
     reset_button.set_image_from_icon_name("edit-clear");
     reset_button.set_tooltip_text(_("Reset to default"));
 
-    pack_start(name_label, false, false);
-    Gtk::Box::pack_end(reset_button, false, false);
+    append(name_label);
 
     auto section   = WCM::get_instance()->get_config_section(option->plugin);
     auto wf_option = section->get_option(option->name);
@@ -394,7 +430,7 @@ OptionWidget::OptionWidget(Option *option) : Gtk::Box(Gtk::ORIENTATION_HORIZONTA
                 {
                     widget->set_value(std::get<int>(option->default_value));
                 });
-            pack_end(std::move(int_spin_button));
+            append(*int_spin_button);
         } else
         {
             auto combo_box = std::make_unique<Gtk::ComboBoxText>();
@@ -419,7 +455,7 @@ OptionWidget::OptionWidget(Option *option) : Gtk::Box(Gtk::ORIENTATION_HORIZONTA
                 {
                     widget->set_active(std::get<int>(option->default_value));
                 });
-            pack_end(std::move(combo_box), true, true);
+            append(*combo_box);
         }
     }
     break;
@@ -472,8 +508,8 @@ OptionWidget::OptionWidget(Option *option) : Gtk::Box(Gtk::ORIENTATION_HORIZONTA
                 length_widget->set_value(default_value->length_ms);
                 easing_widget->set_active_text(default_value->easing_name);
             });
-        pack_end(std::move(animate_spin_button));
-        pack_end(std::move(animate_combo_box));
+        append_ptr(std::unique_ptr<Gtk::Widget>(static_cast<Gtk::Widget*>(animate_spin_button.release())));
+        append_ptr(std::unique_ptr<Gtk::Widget>(static_cast<Gtk::Widget*>(animate_combo_box.release())));
     }
     break;
 
@@ -484,19 +520,19 @@ OptionWidget::OptionWidget(Option *option) : Gtk::Box(Gtk::ORIENTATION_HORIZONTA
         bool value = value_optional ? value_optional.value() : std::get<int>(
             option->default_value);
 
-        auto check_button = std::make_unique<Gtk::CheckButton>();
+        auto check_button = Gtk::make_managed<Gtk::CheckButton>();
         check_button->set_active(value);
         check_button->signal_toggled().connect(
-            [=, widget = check_button.get()]
+            [=, widget = check_button]
             {
                 option->set_save(widget->get_active());
             });
         reset_button.signal_clicked().connect(
-            [=, widget = check_button.get()]
+            [=, widget = check_button]
             {
                 widget->set_active(std::get<int>(option->default_value));
             });
-        pack_end(std::move(check_button));
+        append(*check_button);
     }
     break;
 
@@ -520,7 +556,7 @@ OptionWidget::OptionWidget(Option *option) : Gtk::Box(Gtk::ORIENTATION_HORIZONTA
             {
                 widget->set_value(std::get<double>(option->default_value));
             });
-        pack_end(std::move(spin_box));
+        append(*spin_box);
     }
     break;
 
@@ -540,7 +576,7 @@ OptionWidget::OptionWidget(Option *option) : Gtk::Box(Gtk::ORIENTATION_HORIZONTA
             {
                 widget->set_value(std::get<std::string>(option->default_value));
             });
-        pack_end(std::move(key_entry), true, true);
+        append(*key_entry);
     }
     break;
 
@@ -552,10 +588,12 @@ OptionWidget::OptionWidget(Option *option) : Gtk::Box(Gtk::ORIENTATION_HORIZONTA
             std::unique_ptr<Gtk::Entry> entry;
             if (option->name == "xkb_layout")
             {
-                entry = std::make_unique<LayoutsEntry>();
+                //entry = std::make_unique<LayoutsEntry>();
+                entry = std::make_unique<Gtk::Entry>();
             } else if (option->name == "xkb_model")
             {
-                entry = std::make_unique<XkbModelEntry>();
+                //entry = std::make_unique<XkbModelEntry>();
+                entry = std::make_unique<Gtk::Entry>();
             } else
             {
                 entry = std::make_unique<Gtk::Entry>();
@@ -570,41 +608,41 @@ OptionWidget::OptionWidget(Option *option) : Gtk::Box(Gtk::ORIENTATION_HORIZONTA
 
             auto run_dialog =
                 [=, widget = entry.get()] (const Glib::ustring & label,
-                                           Gtk::FileChooserAction action)
+                                           Gtk::FileChooser::Action action)
                 {
                     auto dialog = Gtk::FileChooserDialog(label, action);
-                    dialog.add_button(_("Cancel"), Gtk::RESPONSE_CANCEL);
-                    dialog.add_button(_("Open"), Gtk::RESPONSE_ACCEPT);
-                    if (dialog.run() == Gtk::RESPONSE_ACCEPT)
-                    {
-                        widget->set_text(dialog.get_filename());
-                    }
+                    dialog.add_button(_("Cancel"), Gtk::ResponseType::CANCEL);
+                    dialog.add_button(_("Open"), Gtk::ResponseType::ACCEPT);
+                    // if (dialog.run() == Gtk::ResponseType::ACCEPT)
+                    // {
+                    //     widget->set_text(dialog.get_filename());
+                    // }
                 };
             if (option->data.hints & HINT_DIRECTORY)
             {
-                auto dir_choose_button = std::make_unique<Gtk::Button>();
+                auto dir_choose_button = Gtk::make_managed<Gtk::Button>();
                 dir_choose_button->set_image_from_icon_name("folder-open");
                 dir_choose_button->set_tooltip_text(_("Choose Directory"));
                 dir_choose_button->signal_clicked().connect(
                     [=]
                     {
                         run_dialog(_("Select Folder"),
-                            Gtk::FILE_CHOOSER_ACTION_SELECT_FOLDER);
+                            Gtk::FileChooser::Action::SELECT_FOLDER);
                     });
-                pack_end(std::move(dir_choose_button));
+                append(*dir_choose_button);
             }
 
             if (option->data.hints & HINT_FILE)
             {
-                auto file_choose_button = std::make_unique<Gtk::Button>();
+                auto file_choose_button = Gtk::make_managed<Gtk::Button>();
                 file_choose_button->set_image_from_icon_name("text-x-generic");
                 file_choose_button->set_tooltip_text(_("Choose File"));
                 file_choose_button->signal_clicked().connect(
                     [=]
                     {
-                        run_dialog(_("Select File"), Gtk::FILE_CHOOSER_ACTION_OPEN);
+                        run_dialog(_("Select File"), Gtk::FileChooser::Action::OPEN);
                     });
-                pack_end(std::move(file_choose_button));
+                append(*file_choose_button);
             }
 
             reset_button.signal_clicked().connect(
@@ -612,10 +650,10 @@ OptionWidget::OptionWidget(Option *option) : Gtk::Box(Gtk::ORIENTATION_HORIZONTA
                 {
                     widget->set_text(std::get<std::string>(option->default_value));
                 });
-            pack_end(std::move(entry), true, true);
+            append(*entry);
         } else
         {
-            auto combo_box = std::make_unique<Gtk::ComboBoxText>();
+            auto combo_box = Gtk::make_managed<Gtk::ComboBoxText>();
             for (const auto & [name, str_value] : option->str_labels)
             {
                 combo_box->append(str_value, name);
@@ -626,16 +664,16 @@ OptionWidget::OptionWidget(Option *option) : Gtk::Box(Gtk::ORIENTATION_HORIZONTA
             }
 
             combo_box->signal_changed().connect(
-                [=, widget = combo_box.get()]
+                [=, widget = combo_box]
                 {
                     option->set_save<std::string>(widget->get_active_id());
                 });
             reset_button.signal_clicked().connect(
-                [=, widget = combo_box.get()]
+                [=, widget = combo_box]
                 {
                     widget->set_active_id(wf_option->get_default_value_str());
                 });
-            pack_end(std::move(combo_box), true, true);
+            append(*combo_box);
         }
     }
     break;
@@ -652,19 +690,19 @@ OptionWidget::OptionWidget(Option *option) : Gtk::Box(Gtk::ORIENTATION_HORIZONTA
 
         Gdk::RGBA rgba;
         rgba.set_rgba(value.r, value.g, value.b, value.a);
-        auto color_button = std::make_unique<Gtk::ColorButton>(rgba);
+        auto color_button = Gtk::make_managed<Gtk::ColorButton>(rgba);
         color_button->set_use_alpha(true);
         color_button->set_title(option->disp_name);
         color_button->property_rgba().signal_changed().connect([=,
                                                                 widget =
-                                                                    color_button.get()]
+                                                                    color_button]
             {
                 auto rgba = widget->get_rgba();
                 wf::color_t color = {rgba.get_red(), rgba.get_green(),
                     rgba.get_blue(), rgba.get_alpha()};
                 option->set_save(color);
             });
-        reset_button.signal_clicked().connect([=, widget = color_button.get()]
+        reset_button.signal_clicked().connect([=, widget = color_button]
             {
                 auto color =
                     wf::option_type::from_string<wf::color_t>(std::get<std::string>(
@@ -673,17 +711,18 @@ OptionWidget::OptionWidget(Option *option) : Gtk::Box(Gtk::ORIENTATION_HORIZONTA
                 rgba.set_rgba(color.r, color.g, color.b, color.a);
                 widget->set_rgba(rgba);
             });
-        pack_end(std::move(color_button));
+        append(*color_button);
     }
     break;
 
       default:
         break;
     }
+    append(reset_button);
 }
 
 AutostartDynamicList::AutostartWidget::AutostartWidget(Option *option) : Gtk::Box(
-        Gtk::ORIENTATION_HORIZONTAL, 10)
+        Gtk::Orientation::HORIZONTAL, 10)
 {
     command_entry.set_text(std::get<std::string>(option->default_value));
     command_entry.signal_changed().connect([=]
@@ -695,12 +734,12 @@ AutostartDynamicList::AutostartWidget::AutostartWidget(Option *option) : Gtk::Bo
     choose_button.signal_clicked().connect([&]
     {
         auto dialog = Gtk::FileChooserDialog(_("Choose Executable"));
-        dialog.add_button(_("Cancel"), Gtk::RESPONSE_CANCEL);
-        dialog.add_button(_("Open"), Gtk::RESPONSE_ACCEPT);
-        if (dialog.run() == Gtk::RESPONSE_ACCEPT)
-        {
-            command_entry.set_text(dialog.get_filename());
-        }
+        dialog.add_button(_("Cancel"), Gtk::ResponseType::CANCEL);
+        dialog.add_button(_("Open"), Gtk::ResponseType::ACCEPT);
+        // if (dialog.run() == Gtk::ResponseType::ACCEPT)
+        // {
+        //     command_entry.set_text(dialog.get_file()->get_path());
+        // }
     });
     run_button.set_image_from_icon_name("media-playback-start");
     run_button.set_tooltip_text(_("Run command"));
@@ -718,10 +757,10 @@ AutostartDynamicList::AutostartWidget::AutostartWidget(Option *option) : Gtk::Bo
         delete option;
         ((AutostartDynamicList*)get_parent())->remove(this);
     });
-    pack_start(command_entry, true, true);
-    pack_start(choose_button, false, false);
-    pack_start(run_button, false, false);
-    pack_start(remove_button, false, false);
+    prepend(command_entry);
+    prepend(choose_button);
+    prepend(run_button);
+    prepend(remove_button);
 }
 
 BindingsDynamicList::BindingWidget::BindingWidget(const std::string & cmd_name,
@@ -747,14 +786,14 @@ BindingsDynamicList::BindingWidget::BindingWidget(const std::string & cmd_name,
             regular_binding_name, "none");
     }
 
-    add(expander);
-    expander.add(vbox);
+    set_child(expander);
+    expander.set_child(vbox);
     if (executable_opt->get_value_str().empty())
     {
         expander.set_expanded();
     }
 
-    vbox.property_margin().set_value(5);
+    vbox.set_margin(5);
 
     Option *key_option =
         option->create_child_option(opt_name, OPTION_TYPE_ACTIVATOR);
@@ -770,7 +809,7 @@ BindingsDynamicList::BindingWidget::BindingWidget(const std::string & cmd_name,
 
     type_label.set_size_request(OPTION_LABEL_SIZE);
     type_label.set_xalign(0);
-    type_box.pack_start(type_label, false, false);
+    type_box.prepend(type_label);
     type_combo_box.append(_("Regular"));
     type_combo_box.append(_("Repeat"));
     type_combo_box.append(_("Always"));
@@ -786,18 +825,18 @@ BindingsDynamicList::BindingWidget::BindingWidget(const std::string & cmd_name,
         section->register_new_option(binding_wf_opt);
         WCM::get_instance()->save_config(option->plugin);
     });
-    type_box.pack_start(type_combo_box, true, true);
-    vbox.pack_start(type_box, false, false);
+    type_box.prepend(type_combo_box);
+    vbox.prepend(type_box);
 
     binding_label.set_size_request(OPTION_LABEL_SIZE);
     binding_label.set_xalign(0);
-    binding_box.pack_start(binding_label, false, false);
-    binding_box.pack_start(*key_entry, true, true);
-    vbox.pack_start(binding_box, false, false);
+    binding_box.prepend(binding_label);
+    binding_box.prepend(*key_entry);
+    vbox.prepend(binding_box);
 
     command_label.set_size_request(OPTION_LABEL_SIZE);
     command_label.set_xalign(0);
-    command_box.pack_start(command_label, false, false);
+    command_box.prepend(command_label);
     expander.set_label(fmt::format(_("Command {name}"), fmt::arg("name", cmd_name)));
     command_entry.signal_changed().connect([=]
     {
@@ -805,7 +844,7 @@ BindingsDynamicList::BindingWidget::BindingWidget(const std::string & cmd_name,
             fmt::arg("name", cmd_name),
             fmt::arg("command", command_entry.get_text().c_str())));
         auto *label = (Gtk::Label*)expander.get_label_widget();
-        label->set_ellipsize(Pango::ELLIPSIZE_END);
+        label->set_ellipsize(Pango::EllipsizeMode::END);
         label->set_tooltip_text(command_entry.get_text());
     });
     command_entry.set_text(executable_opt->get_value_str());
@@ -813,7 +852,7 @@ BindingsDynamicList::BindingWidget::BindingWidget(const std::string & cmd_name,
     {
         command_option->set_save<std::string>(command_entry.get_text());
     });
-    command_box.pack_start(command_entry, true, true);
+    command_box.prepend(command_entry);
     remove_button.set_image_from_icon_name("list-remove");
     remove_button.signal_clicked().connect([=]
     {
@@ -824,13 +863,13 @@ BindingsDynamicList::BindingWidget::BindingWidget(const std::string & cmd_name,
         section->unregister_option(executable_opt);
         WCM::get_instance()->save_config(option->plugin);
     });
-    command_box.pack_start(remove_button, false, false);
-    vbox.pack_start(command_box);
+    command_box.prepend(remove_button);
+    vbox.prepend(command_box);
 }
 
 template<enum VswitchBindingKind kind>
 VswitchBindingsDynamicList<kind>::BindingWidget::BindingWidget(std::shared_ptr<wf::config::section_t> section,
-    Option *option, int workspace_index) : Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 10)
+    Option *option, int workspace_index) : Gtk::Box(Gtk::Orientation::HORIZONTAL, 10)
 {
     Option *key_option = option->create_child_option(OPTION_PREFIX + std::to_string(
         workspace_index), OPTION_TYPE_KEY);
@@ -862,17 +901,19 @@ VswitchBindingsDynamicList<kind>::BindingWidget::BindingWidget(std::shared_ptr<w
         WCM::get_instance()->save_config(option->plugin);
     });
 
-    pack_start(label, false, false);
-    pack_start(workspace_spin_button, false, false);
-    pack_end(remove_button, false, false);
-    pack_end(key_entry);
+    // TODO: some properties were dropped; check layout
+    append(workspace_spin_button);
+    append(label);
+    append(remove_button);
+    append(key_entry);
 }
 
-DynamicListBase::DynamicListBase() : Gtk::Box(Gtk::ORIENTATION_VERTICAL, 10)
+DynamicListBase::DynamicListBase() : Gtk::Box(Gtk::Orientation::VERTICAL, 10)
 {
     add_button.set_image_from_icon_name("list-add");
-    add_box.pack_end(add_button, false, false);
-    pack_end(add_box, false, false);
+    // TODO: some properties were dropped; check layout
+    add_box.append(add_button);
+    append(add_box);
 }
 
 AutostartDynamicList::AutostartDynamicList(Option *option)
@@ -920,7 +961,6 @@ AutostartDynamicList::AutostartDynamicList(Option *option)
         Option *dyn_opt = option->create_child_option(name, OPTION_TYPE_STRING);
         dyn_opt->default_value = executable;
         pack_widget(std::make_unique<AutostartWidget>(dyn_opt));
-        show_all();
     });
 }
 
@@ -965,7 +1005,6 @@ BindingsDynamicList::BindingsDynamicList(Option *option)
                 cmd_name, "none"));
         WCM::get_instance()->save_config(option->plugin);
         pack_widget(std::make_unique<BindingWidget>(cmd_name, option, section));
-        show_all();
     });
 }
 
@@ -1019,7 +1058,6 @@ VswitchBindingsDynamicList<kind>::VswitchBindingsDynamicList(Option *option)
         section->register_new_option(std::make_shared<wf::config::option_t<std::string>>(
             binding_option->name, ""));
         pack_widget(std::make_unique<BindingWidget>(section, binding_option, workspace_index));
-        show_all();
         WCM::get_instance()->save_config(option->plugin);
     });
 }
@@ -1028,26 +1066,26 @@ template<enum VswitchBindingKind kind>
 VswitchBindingsWidget<kind>::VswitchBindingsWidget(Option *option) : dynamic_list(option)
 {
     set_label(fmt::format("{option_name} Bindings", fmt::arg("option_name", LABEL_TEXT.c_str())));
-    dynamic_list.property_margin().set_value(5);
-    add(dynamic_list);
+    dynamic_list.set_margin(3);
+    set_child(dynamic_list);
 }
 
 OptionSubgroupWidget::OptionSubgroupWidget(Option *subgroup)
 {
-    add(expander);
+    set_child(expander);
     expander.set_label(subgroup->name);
-    expander.add(expander_layout);
+    expander.set_child(expander_layout);
     for (Option *option : subgroup->options)
     {
         option_widgets.push_back(std::make_unique<OptionWidget>(option));
-        expander_layout.pack_start(*option_widgets.back());
+        expander_layout.append(*option_widgets.back());
     }
 }
 
 OptionGroupWidget::OptionGroupWidget(Option *group)
 {
-    add(options_layout);
-    options_layout.property_margin().set_value(10);
+    set_child(options_layout);
+    options_layout.set_margin(10);
     set_vexpand();
 
     for (Option *option : group->options)
@@ -1097,7 +1135,7 @@ OptionGroupWidget::OptionGroupWidget(Option *group)
             option_widgets.push_back(std::make_unique<OptionWidget>(option));
         }
 
-        options_layout.pack_start(*option_widgets.back(), fill_expand, fill_expand);
+        options_layout.prepend(*option_widgets.back());
     }
 }
 
@@ -1121,16 +1159,17 @@ MainPage::Category::Category(const Glib::ustring & name,
     const Glib::ustring & icon_name) : name(name)
 {
     label.set_markup("<span size=\"14000\"><b>" + name + "</b></span>");
-    image.set_from_icon_name(icon_name, Gtk::ICON_SIZE_DND);
-    title_box.pack_start(image);
-    title_box.pack_start(label);
-    title_box.set_halign(Gtk::ALIGN_START);
-    vbox.pack_start(title_box);
-    vbox.pack_start(flowbox);
+    image.set_from_icon_name(icon_name);
+    image.set_icon_size(Gtk::IconSize::LARGE);
+    title_box.append(image);
+    title_box.append(label);
+    title_box.set_halign(Gtk::Align::START);
+    vbox.append(title_box);
+    vbox.append(flowbox);
     vbox.set_margin_top(10);
     vbox.set_margin_bottom(10);
-    flowbox.set_selection_mode(Gtk::SELECTION_NONE);
-    flowbox.set_halign(Gtk::ALIGN_START);
+    flowbox.set_selection_mode(Gtk::SelectionMode::NONE);
+    flowbox.set_halign(Gtk::Align::START);
     flowbox.set_min_children_per_line(3);
 }
 
@@ -1140,23 +1179,25 @@ void Plugin::init_widget()
     if (std::filesystem::exists(icon_path))
     {
         icon.set(icon_path);
+        icon.set_icon_size(Gtk::IconSize::LARGE);
     } else
     {
-        icon.set_from_icon_name("wcm", Gtk::ICON_SIZE_DND);
+        icon.set_from_icon_name("wcm");
+        icon.set_icon_size(Gtk::IconSize::LARGE);
     }
 
-    button_layout.pack_start(icon);
+    button_layout.append(icon);
     std::string gettext_domain_name = "wf-plugin-" + name;
     label.set_text(dgettext(gettext_domain_name.c_str(), disp_name.c_str()));
-    label.set_ellipsize(Pango::ELLIPSIZE_END);
-    button_layout.pack_start(label);
-    button_layout.set_halign(Gtk::ALIGN_START);
+    label.set_ellipsize(Pango::EllipsizeMode::END);
+    button_layout.append(label);
+    label.set_hexpand(true);
+    button_layout.set_halign(Gtk::Align::START);
     button.set_tooltip_markup(dgettext(gettext_domain_name.c_str(), tooltip.c_str()));
-    button.set_relief(Gtk::RELIEF_NONE);
-    button.add(button_layout);
+    button.set_has_frame(false);
+    button.set_child(button_layout);
     enabled_check.set_active(enabled);
-    widget.set_halign(Gtk::ALIGN_START);
-    widget.pack_start(enabled_check, false, false);
+    widget.set_halign(Gtk::Align::START);
     if (!is_core_plugin() && (type == PLUGIN_TYPE_WAYFIRE))
     {
         enabled_check.signal_toggled().connect(
@@ -1171,19 +1212,20 @@ void Plugin::init_widget()
         // enabled_check.set_opacity(0);
     }
 
-    widget.pack_start(button);
+    widget.append(enabled_check);
+    widget.append(button);
     button.signal_clicked().connect([=] { WCM::get_instance()->open_page(this); });
 }
 
 void MainPage::Category::add_plugin(Plugin *plugin)
 {
     plugin->init_widget();
-    flowbox.add(plugin->widget);
+    flowbox.append(plugin->widget);
 }
 
 MainPage::MainPage(const std::vector<Plugin*> & plugins) : plugins(plugins)
 {
-    add(vbox);
+    set_child(vbox);
     for (auto *plugin : plugins)
     {
         std::find_if(categories.begin(), categories.end() - 1,
@@ -1194,11 +1236,11 @@ MainPage::MainPage(const std::vector<Plugin*> & plugins) : plugins(plugins)
         size_group->add_widget(plugin->widget);
     }
 
-    vbox.add(categories[0].vbox);
+    vbox.append(categories[0].vbox);
     for (int i = 1; i < NUM_CATEGORIES; ++i)
     {
-        vbox.add(separators[i - 1]);
-        vbox.add(categories[i].vbox);
+        vbox.append(separators[i - 1]);
+        vbox.append(categories[i].vbox);
     }
 
     // hide empty categories
@@ -1353,13 +1395,12 @@ WCM::WCM(Glib::RefPtr<Gtk::Application> app)
         }
 
         window    = std::make_unique<Gtk::ApplicationWindow>(app);
-        auto icon = Gdk::Pixbuf::create_from_file(find_icon("wcm.svg"));
-        window->set_icon(icon);
+        window->set_icon_name("wcm");
         window->set_size_request(750, 550);
         window->set_default_size(1000, 580);
         window->set_title(_("Wayfire Config Manager"));
         create_main_layout();
-        window->show_all();
+        window->present();
     });
 
     app->signal_activate().connect([&] { window->present(); });
@@ -1428,13 +1469,12 @@ bool WCM::lock_input(Gtk::Dialog *grab_dialog)
             std::endl;
 
         auto error_dialog = Gtk::Dialog(
-            "Compositor does not advertise zwp_keyboard_shortcuts_inhibit_manager_v1!", *window,
-            Gtk::DIALOG_DESTROY_WITH_PARENT);
+            "Compositor does not advertise zwp_keyboard_shortcuts_inhibit_manager_v1!", *window);
         auto label = Gtk::Label(_("To use input binding capture, enable shortcuts-inhibit plugin."));
-        error_dialog.get_content_area()->pack_start(label, true, true, 50);
+        error_dialog.get_content_area()->prepend(label);
         error_dialog.add_button("Ok", 0);
         label.show();
-        error_dialog.run();
+        // error_dialog.run();
 
         return false;
     }
@@ -1445,8 +1485,8 @@ bool WCM::lock_input(Gtk::Dialog *grab_dialog)
     }
 
     /* Lock input */
-    auto surface = gdk_wayland_window_get_wl_surface(gtk_widget_get_window(GTK_WIDGET(grab_dialog->gobj())));
-    auto seat    = gdk_wayland_seat_get_wl_seat(gdk_device_get_seat(gtk_get_current_event_device()));
+    auto surface = gdk_wayland_surface_get_wl_surface(gtk_native_get_surface(GTK_NATIVE(grab_dialog->get_root()->gobj())));
+    auto seat    = gdk_wayland_seat_get_wl_seat(gdk_display_get_default_seat(gdk_display_get_default()));
     shortcuts_inhibitor = zwp_keyboard_shortcuts_inhibit_manager_v1_inhibit_shortcuts(inhibitor_manager,
         surface, seat);
 
@@ -1510,27 +1550,21 @@ void WCM::set_plugin_enabled(Plugin *plugin, bool enabled)
 
 void WCM::create_main_layout()
 {
-    window->signal_key_press_event().connect([] (GdkEventKey *event)
-    {
-        if (event->state & GDK_CONTROL_MASK && (event->keyval == GDK_KEY_q))
-        {
-            std::exit(0);
-        }
-
-        return false;
-    });
+    // TODO: reimplement ^Q shortcut
 
     main_page = std::make_unique<MainPage>(plugins);
 
-    filter_label.property_margin().set_value(10);
+    filter_label.set_margin(10);
     filter_label.set_markup("<span size=\"large\"><b>" + std::string(_("Filter")) + "</b></span>");
-    main_left_panel_layout.pack_start(filter_label, false, false);
+    main_left_panel_layout.prepend(filter_label);
 
-    search_entry.property_margin().set_value(10);
+    search_entry.set_margin(10);
     search_entry.signal_search_changed().connect([&]
     {
         main_page->set_filter(search_entry.get_text());
     });
+    // TODO: reimplement Escape key
+    /*
     search_entry.signal_key_press_event().connect([&] (GdkEventKey *event)
     {
         if (event->keyval == GDK_KEY_Escape)
@@ -1540,18 +1574,20 @@ void WCM::create_main_layout()
 
         return false;
     });
-    main_left_panel_layout.pack_start(search_entry, false, false);
+    */
+    main_left_panel_layout.prepend(search_entry);
 
-    close_button.property_margin().set_value(10);
+    close_button.set_margin(10);
     close_button.signal_clicked().connect([] { std::exit(0); });
-    main_left_panel_layout.pack_end(close_button, false, false);
+    main_left_panel_layout.append(close_button);
+    close_button.set_valign(Gtk::Align::END);
 
-    output_config_button.property_margin().set_value(10);
+    output_config_button.set_margin(10);
     output_config_button.signal_clicked().connect([]
     {
         Glib::spawn_command_line_async(OUTPUT_CONFIG_PROGRAM);
     });
-    main_left_panel_layout.pack_end(output_config_button, false, false);
+    main_left_panel_layout.append(output_config_button);
 
     if (system("command -v " OUTPUT_CONFIG_PROGRAM " > /dev/null 2>&1") != 0)
     {
@@ -1560,23 +1596,23 @@ void WCM::create_main_layout()
             _("Cannot find program <tt>wdisplays</tt>"));
     }
 
-    plugin_left_panel_layout.pack_start(plugin_name_label, false, false);
-    plugin_name_label.set_line_wrap();
+    plugin_left_panel_layout.prepend(plugin_name_label);
+    plugin_name_label.set_wrap(true);
     plugin_name_label.set_max_width_chars(15);
     plugin_name_label.set_xalign(0.5);
-    plugin_name_label.set_justify(Gtk::JUSTIFY_CENTER);
-    plugin_name_label.property_margin().set_value(50);
+    plugin_name_label.set_justify(Gtk::Justification::LEFT);
+    plugin_name_label.set_margin(50);
     plugin_name_label.set_margin_bottom(25);
-    plugin_left_panel_layout.pack_start(plugin_description_label, false, false);
-    plugin_description_label.set_line_wrap();
+    plugin_left_panel_layout.prepend(plugin_description_label);
+    plugin_description_label.set_wrap();
     plugin_description_label.set_max_width_chars(20);
     plugin_description_label.set_xalign(0.5);
-    plugin_description_label.set_justify(Gtk::JUSTIFY_CENTER);
+    plugin_description_label.set_justify(Gtk::Justification::CENTER);
     plugin_description_label.set_margin_start(50);
     plugin_description_label.set_margin_end(50);
-    plugin_left_panel_layout.pack_start(plugin_enabled_box, false, false);
+    plugin_left_panel_layout.prepend(plugin_enabled_box);
     plugin_enabled_box.set_margin_top(25);
-    plugin_enabled_box.pack_start(plugin_enabled_check);
+    plugin_enabled_box.prepend(plugin_enabled_check);
     plugin_enabled_check.signal_toggled().connect([=]
     {
         if (current_plugin)
@@ -1584,21 +1620,22 @@ void WCM::create_main_layout()
             set_plugin_enabled(current_plugin, plugin_enabled_check.get_active());
         }
     });
-    plugin_enabled_box.pack_start(plugin_enabled_label);
-    plugin_enabled_box.set_halign(Gtk::ALIGN_CENTER);
-    plugin_left_panel_layout.pack_end(back_button, false, false);
-    back_button.property_margin().set_value(10);
+    plugin_enabled_box.prepend(plugin_enabled_label);
+    plugin_enabled_box.set_halign(Gtk::Align::CENTER);
+    plugin_left_panel_layout.append(back_button);
+    back_button.set_margin(10);
     back_button.signal_clicked().connect([=] { open_page(); });
 
     left_stack.add(main_left_panel_layout);
     left_stack.add(plugin_left_panel_layout);
     left_stack.set_size_request(250, -1);
-    left_stack.set_transition_type(Gtk::STACK_TRANSITION_TYPE_CROSSFADE);
+    left_stack.set_transition_type(Gtk::StackTransitionType::CROSSFADE);
     main_stack.add(*main_page);
-    main_stack.set_transition_type(Gtk::STACK_TRANSITION_TYPE_SLIDE_LEFT_RIGHT);
-    global_layout.pack_start(left_stack, false, false);
-    global_layout.pack_start(main_stack, true, true);
-    window->add(global_layout);
+    main_stack.set_hexpand(true);
+    main_stack.set_transition_type(Gtk::StackTransitionType::SLIDE_LEFT_RIGHT);
+    global_layout.append(left_stack);
+    global_layout.append(main_stack);
+    window->set_child(global_layout);
     if (!start_plugin.empty())
     {
         Plugin *launch_plugin = find_plugin_by_name(plugins, start_plugin);
@@ -1623,7 +1660,6 @@ void WCM::open_page(Plugin *plugin)
             std::string(dgettext(gettext_domain_name.c_str(), plugin->tooltip.c_str())) + "</b></span>");
         plugin_page = std::make_unique<PluginPage>(plugin);
         main_stack.add(*plugin_page);
-        plugin_page->show_all();
         main_stack.set_visible_child(*plugin_page);
         left_stack.set_visible_child(plugin_left_panel_layout);
     } else

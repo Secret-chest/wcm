@@ -2,12 +2,6 @@ project('wcm', 'c', 'cpp', version : '0.11.0', default_options : 'cpp_std=c++17'
 
 fs = import('fs')
 
-add_project_arguments(
-    '-DGDKMM_DISABLE_DEPRECATED',
-    '-DGTKMM_DISABLE_DEPRECATED',
-    language : ['c', 'cpp']
-)
-
 add_global_arguments('-DWAYFIRE_CONFIG_FILE="' + get_option('wayfire_config_file_path') + '"', language : 'cpp')
 add_global_arguments('-DWF_SHELL_CONFIG_FILE="' + get_option('wf_shell_config_file_path') + '"', language : 'cpp')
 

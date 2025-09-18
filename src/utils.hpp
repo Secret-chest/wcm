@@ -24,18 +24,19 @@ class PrettyButton : public Gtk::Button
 {
   public:
     PrettyButton(const Glib::ustring & text, const Glib::ustring & icon,
-        Gtk::IconSize icon_size = Gtk::ICON_SIZE_BUTTON) :
+        Gtk::IconSize icon_size = Gtk::IconSize::LARGE) :
         label(text)
     {
-        image.set_from_icon_name(icon, icon_size);
-        layout.pack_start(image);
-        layout.pack_start(label);
-        layout.set_halign(Gtk::ALIGN_CENTER);
-        add(layout);
+        image.set_from_icon_name(icon);
+        image.set_icon_size(icon_size);
+        layout.append(image);
+        layout.append(label);
+        layout.set_halign(Gtk::Align::CENTER);
+        set_child(layout);
     }
 
   private:
-    Gtk::Box layout = Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 5);
+    Gtk::Box layout = Gtk::Box(Gtk::Orientation::HORIZONTAL, 5);
     Gtk::Image image;
     Gtk::Label label;
 };

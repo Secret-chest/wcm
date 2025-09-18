@@ -28,7 +28,7 @@
 
 #include <algorithm>
 #include <array>
-#include <gdk/gdkwayland.h>
+#include <gdk/wayland/gdkwayland.h>
 #include <gtkmm.h>
 #include <iostream>
 #include <fmt/core.h>
@@ -61,9 +61,9 @@ class MainPage : public Gtk::ScrolledWindow
     {
         Glib::ustring name;
 
-        Gtk::Box vbox = Gtk::Box(Gtk::ORIENTATION_VERTICAL, 10);
+        Gtk::Box vbox = Gtk::Box(Gtk::Orientation::VERTICAL, 10);
 
-        Gtk::Box title_box = Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 10);
+        Gtk::Box title_box = Gtk::Box(Gtk::Orientation::HORIZONTAL, 10);
         Gtk::Image image;
         Gtk::Label label;
 
@@ -74,9 +74,8 @@ class MainPage : public Gtk::ScrolledWindow
     };
 
     const std::vector<Plugin*> & plugins;
-    Gtk::Box vbox = Gtk::Box(Gtk::ORIENTATION_VERTICAL, 10);
-    Glib::RefPtr<Gtk::SizeGroup> size_group = Gtk::SizeGroup::create(
-        Gtk::SIZE_GROUP_BOTH);
+    Gtk::Box vbox = Gtk::Box(Gtk::Orientation::VERTICAL, 10);
+    Glib::RefPtr<Gtk::SizeGroup> size_group = Gtk::SizeGroup::create(Gtk::SizeGroup::Mode::BOTH);
     std::array<Gtk::Separator, NUM_CATEGORIES - 1> separators;
     std::array<Category, NUM_CATEGORIES> categories = {
         Category{_("General"), "preferences-system"},
@@ -89,12 +88,12 @@ class MainPage : public Gtk::ScrolledWindow
 
 class KeyEntry : public Gtk::Stack
 {
-    Gtk::Box grab_layout  = Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 10);
+    Gtk::Box grab_layout  = Gtk::Box(Gtk::Orientation::HORIZONTAL, 10);
     Gtk::Label grab_label = Gtk::Label(_("(none)"));
     Gtk::Button grab_button;
     Gtk::Button edit_button;
 
-    Gtk::Box edit_layout = Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 10);
+    Gtk::Box edit_layout = Gtk::Box(Gtk::Orientation::HORIZONTAL, 10);
     Gtk::Entry entry;
     Gtk::Button ok_button;
     Gtk::Button cancel_button;
@@ -103,11 +102,11 @@ class KeyEntry : public Gtk::Stack
     static bool check_and_confirm(const std::string & key_str);
     static std::string grab_key();
 
-    sigc::signal<void> changed;
+    sigc::signal<void()> changed;
 
   public:
     KeyEntry();
-    inline sigc::signal<void> signal_changed()
+    inline sigc::signal<void()> signal_changed()
     {
         return changed;
     }
@@ -125,6 +124,7 @@ class KeyEntry : public Gtk::Stack
     }
 };
 
+/*
 class LayoutsEntry : public Gtk::Entry
 {
     Gtk::SeparatorMenuItem separator;
@@ -142,6 +142,7 @@ class XkbModelEntry : public Gtk::Entry
   public:
     XkbModelEntry();
 };
+*/
 
 class OptionWidget : public Gtk::Box
 {
@@ -157,10 +158,15 @@ class OptionWidget : public Gtk::Box
     std::unique_ptr<Gtk::ComboBoxText> animate_combo_box;
     animate_option ao;
 
-    inline void pack_end(std::unique_ptr<Gtk::Widget> && widget, bool expand = false,
-        bool fill = false)
+    inline void append_ptr(std::unique_ptr<Gtk::Widget> && widget)
     {
-        Gtk::Box::pack_end(*widget, expand, fill);
+        Gtk::Box::append(*widget);
+        widgets.push_back(std::move(widget));
+    }
+
+    inline void prepend_ptr(std::unique_ptr<Gtk::Widget> && widget)
+    {
+        Gtk::Box::prepend(*widget);
         widgets.push_back(std::move(widget));
     }
 
@@ -172,13 +178,13 @@ class OptionWidget : public Gtk::Box
 class DynamicListBase : public Gtk::Box
 {
   protected:
-    Gtk::Box add_box = Gtk::Box(Gtk::ORIENTATION_HORIZONTAL);
+    Gtk::Box add_box = Gtk::Box(Gtk::Orientation::HORIZONTAL);
     Gtk::Button add_button;
 
     std::vector<std::unique_ptr<Gtk::Widget>> widgets;
     inline void pack_widget(std::unique_ptr<Gtk::Widget> && widget)
     {
-        pack_start(*widget, false, false);
+        prepend(*widget);
         widgets.push_back(std::move(widget));
     }
 
@@ -212,10 +218,10 @@ class BindingsDynamicList : public DynamicListBase
     struct BindingWidget : public Gtk::Frame
     {
         Gtk::Expander expander = Gtk::Expander(_("Command:"));
-        Gtk::Box vbox     = Gtk::Box(Gtk::ORIENTATION_VERTICAL, 10);
-        Gtk::Box type_box = Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 10);
-        Gtk::Box binding_box = Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 10);
-        Gtk::Box command_box = Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 10);
+        Gtk::Box vbox     = Gtk::Box(Gtk::Orientation::VERTICAL, 10);
+        Gtk::Box type_box = Gtk::Box(Gtk::Orientation::HORIZONTAL, 10);
+        Gtk::Box binding_box = Gtk::Box(Gtk::Orientation::HORIZONTAL, 10);
+        Gtk::Box command_box = Gtk::Box(Gtk::Orientation::HORIZONTAL, 10);
 
         Gtk::Label type_label    = Gtk::Label(_("Type"));
         Gtk::Label binding_label = Gtk::Label(_("Binding"));
@@ -278,7 +284,7 @@ class VswitchBindingsWidget : public Gtk::Frame
 class OptionSubgroupWidget : public Gtk::Frame
 {
     Gtk::Expander expander;
-    Gtk::Box expander_layout = Gtk::Box(Gtk::ORIENTATION_VERTICAL, 10);
+    Gtk::Box expander_layout = Gtk::Box(Gtk::Orientation::VERTICAL, 10);
     std::vector<std::unique_ptr<OptionWidget>> option_widgets;
 
   public:
@@ -287,7 +293,7 @@ class OptionSubgroupWidget : public Gtk::Frame
 
 class OptionGroupWidget : public Gtk::ScrolledWindow
 {
-    Gtk::Box options_layout = Gtk::Box(Gtk::ORIENTATION_VERTICAL, 10);
+    Gtk::Box options_layout = Gtk::Box(Gtk::Orientation::VERTICAL, 10);
     std::vector<std::unique_ptr<Gtk::Widget>> option_widgets;
 
   public:
@@ -331,17 +337,17 @@ class WCM
 
     Gtk::Stack left_stack; /* for animated transition */
 
-    Gtk::Box main_left_panel_layout = Gtk::Box(Gtk::ORIENTATION_VERTICAL);
+    Gtk::Box main_left_panel_layout = Gtk::Box(Gtk::Orientation::VERTICAL);
     Gtk::Label filter_label;
     Gtk::SearchEntry search_entry;
     PrettyButton close_button = PrettyButton(_("Close"), "window-close");
     PrettyButton output_config_button =
         PrettyButton(_("Configure Outputs"), "computer");
 
-    Gtk::Box plugin_left_panel_layout = Gtk::Box(Gtk::ORIENTATION_VERTICAL);
+    Gtk::Box plugin_left_panel_layout = Gtk::Box(Gtk::Orientation::VERTICAL);
     Gtk::Label plugin_name_label;
     Gtk::Label plugin_description_label;
-    Gtk::Box plugin_enabled_box = Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 10);
+    Gtk::Box plugin_enabled_box = Gtk::Box(Gtk::Orientation::HORIZONTAL, 10);
     Gtk::CheckButton plugin_enabled_check;
     Gtk::Label plugin_enabled_label = Gtk::Label(_("Use This Plugin"));
     PrettyButton back_button = PrettyButton(_("Back"), "go-previous");

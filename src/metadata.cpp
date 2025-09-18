@@ -348,7 +348,7 @@ Option::~Option()
     }
 }
 
-Option*Option::create_child_option(const std::string & name, option_type type)
+Option*Option::create_child_option(const std::string &name, option_type type)
 {
     auto *option = new Option();
     option->name   = name;
